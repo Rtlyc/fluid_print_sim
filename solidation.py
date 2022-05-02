@@ -40,6 +40,9 @@ total_x = ti.Vector.field(2, float, n_particles*10)
 total_affine = ti.Matrix.field(2, 2, float, n_particles*10)
 cur_affine = ti.Matrix.field(2, 2, float, n_particles)
 
+boundary_length = 1000
+boundary = ti.field(float, boundary_length)
+
 
 
 @ti.kernel
@@ -102,19 +105,19 @@ def substep():
             grid_v[base + offset] += weight * v_f 
             grid_m[base + offset] += weight * p_mass
     
-    # Add boundary particles
-    for p in range(all_particles[None]):
-        Xp = total_x[p] / dx
-        base = int(Xp - 0.5)
-        fx = Xp - base
-        w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
-        affine = total_affine[p]
-        for i, j in ti.static(ti.ndrange(3, 3)):
-            offset = ti.Vector([i, j])
-            dpos = (offset - fx) * dx
-            weight = w[i].x * w[j].y
-            grid_v[base + offset] += weight * affine@dpos
-            grid_m[base + offset] += weight * p_mass
+    #! Add boundary particles
+    # for p in range(all_particles[None]):
+    #     Xp = total_x[p] / dx
+    #     base = int(Xp - 0.5)
+    #     fx = Xp - base
+    #     w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
+    #     affine = total_affine[p]
+    #     for i, j in ti.static(ti.ndrange(3, 3)):
+    #         offset = ti.Vector([i, j])
+    #         dpos = (offset - fx) * dx
+    #         weight = w[i].x * w[j].y
+    #         grid_v[base + offset] += weight * affine@dpos
+    #         grid_m[base + offset] += weight * p_mass
 
     # projection & gravity
     for i, j in grid_m:
@@ -147,17 +150,24 @@ def substep():
             new_v += weight * g_v
             new_C += 4 * weight * g_v.outer_product(dpos) / dx**2
         v[p] = new_v
+        #! ADD Boundary conditions based on list
+        xind = int(x[p].x * boundary_length - 0.5)
+        if x[p].y < boundary[xind]:
+            v[p].y = 0.0
+            v[p].x = 0.0
+        #!
         x[p] += dt * v[p]
         # J[p] *= 1 + dt * new_C.trace()
         C[p] = new_C
 
+# will only be called one time
 @ti.kernel
 def start():
     t[None] = 0.0
     ratio[None] = 0.0
     all_particles[None] = 0
 
-
+# will be called n times
 @ti.kernel
 def init():
     for i in range(n_particles):
@@ -167,13 +177,16 @@ def init():
         F[i] = ti.Matrix([[1, 0], [0, 1]])
         Jp[i] = 1
 
-
+# will be called n-1 times when append new fluid
 @ti.kernel
 def accumulate():
     t[None] = 0.0
     for i in range(n_particles):
         total_x[i+all_particles[None]] = x[i]
         total_affine[i+all_particles[None]] = cur_affine[i]
+
+        xind = int(x[i].x * boundary_length - 0.5)
+        boundary[xind] = max(boundary[xind],x[i].y)
 
     all_particles[None] += n_particles
 
