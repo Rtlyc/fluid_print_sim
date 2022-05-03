@@ -6,8 +6,8 @@ import numpy as np
 ti.init(arch=ti.gpu)
 
 maximum_step = 16
-n_particles = 512
-square_size = 0.2
+n_particles = 512*8
+square_size = 0.3
 x_offset = 0.3
 y_offset = 0.6
 
@@ -26,7 +26,6 @@ bound = 3
 E = 400
 
 t = ti.field(float, ())
-ratio = ti.field(float, ())
 inv_dx = float(n_grid)
 E, nu = 0.1e4, 0.2  # Young's modulus and Poisson's ratio
 mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / (
@@ -48,6 +47,7 @@ F_window = ti.Matrix.field(2, 2, float)
 Jp_window = ti.field(float)
 C_window = ti.Matrix.field(2, 2, float)
 window = ti.root.pointer(ti.ij,(window_size,n_particles))
+# window = ti.root.dynamic(ti.i,window_size).dynamic(ti.j,n_particles)
 window.place(position_window, affine_window, v_window, F_window, Jp_window, C_window)
 
 
@@ -144,10 +144,8 @@ def substep():
 @ti.kernel
 def start():
     t[None] = 0.0
-    ratio[None] = 0.0
     solid_particles[None] = 0
     time_stamp[None] = 0
-
 
 # will be called n times
 @ti.kernel
@@ -172,25 +170,29 @@ def solid_accumulate():
         boundary[xind] = max(boundary[xind], position_window[q_ind,i].y)
     solid_particles[None] += n_particles
 
+def accumulate():
+    if time_stamp[None] >= window_size:
+        solid_accumulate()
+    init()
+
 start()
 init()
 gui = ti.GUI('MPM88')
 while gui.running:
     t[None] += 1e-2
-    ratio[None] = 1.0/(1.0+ti.exp(-t[None]+10.0))
+    # ratio[None] = 1.0/(1.0+ti.exp(-t[None]+10.0))
     for e in gui.get_events(gui.PRESS):
         if e.key == gui.ESCAPE:
             gui.running = False
-        elif e.key == 'r':
-            start()
-            init()
+        # elif e.key == 'r':
+        #     start()
+        #     init()
         elif e.key in ('p'):
-            print(t[None],ratio[None])
+            print(t[None])
         elif e.key == 'a':
             time_stamp[None] += 1
-            if time_stamp[None] >= window_size:
-                solid_accumulate()
-            init()
+            accumulate()
+
     mouse_pos = gui.get_cursor_pos()
     attractor_pos[None] = mouse_pos
     attractor_strength[None] = (gui.is_pressed(gui.LMB) - gui.is_pressed(gui.RMB))*2.0
