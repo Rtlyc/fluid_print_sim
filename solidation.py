@@ -1,15 +1,22 @@
 # MPM-MLS in 88 lines of Taichi code, originally created by @yuanming-hu
+from tkinter import N
 from matplotlib.ft2font import KERNING_DEFAULT
 import taichi as ti
 import numpy as np
 
 ti.init(arch=ti.gpu)
 
-maximum_step = 16
-n_particles = 512*8
-square_size = 0.3
+maximum_step = 1024
+n_particles = 64
+square_size = 0.05
 x_offset = 0.3
-y_offset = 0.6
+y_offset = 0.9
+
+printer_x = ti.field(float, ())
+printer_v = 0.005
+printer_size = 0.05
+printer_particles = 256
+printer = ti.Vector.field(2, float, printer_particles)
 
 
 n_grid = 128
@@ -25,7 +32,10 @@ attractor_strength = ti.field(float, ())
 bound = 3
 E = 400
 
+cooldown = 0.015
 t = ti.field(float, ())
+pretime = ti.field(float, ())
+
 inv_dx = float(n_grid)
 E, nu = 0.1e4, 0.2  # Young's modulus and Poisson's ratio
 mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / (
@@ -37,7 +47,7 @@ grid_m = ti.field(float, (n_grid, n_grid))
 solid_particles = ti.field(int, ())
 solid_x = ti.Vector.field(2, float, n_particles*maximum_step)
 time_stamp = ti.field(int, ())
-window_size = 4
+window_size = 256
 start_time_window = ti.field(float, window_size)
 
 affine_window = ti.Matrix.field(2, 2, float)
@@ -82,11 +92,12 @@ def substep():
         stress0 = (-dt * p_vol * 4 * inv_dx * inv_dx) * stress0
         affine0 = stress0 + p_mass * C_window[index,p]
 
-        mu = 0.1
+        mu = 0.01
         stress1 = 2 * mu * (F_window[index, p] - U @ V.transpose()) @ F_window[index, p].transpose() + ti.Matrix.identity(float, 2) * lambda_0 * J * (J - 1)
         stress1 = (-dt * p_vol * 4 * inv_dx * inv_dx) * stress1
         affine1 = stress1 + p_mass * C_window[index,p]
-        cur_ratio = 1.0/(1.0+ti.exp(-(t[None]-start_time_window[index])+10.0))
+        duration = ti.min(t[None]-start_time_window[index],15)
+        cur_ratio = 1.0/(1.0+ti.exp(-duration+10.0))
         # cur_ratio = 0.5
 
         affine_window[index,p] = affine0*cur_ratio + affine1*(1.0-cur_ratio)
@@ -146,6 +157,8 @@ def start():
     t[None] = 0.0
     solid_particles[None] = 0
     time_stamp[None] = 0
+    pretime[None] = 0.0
+    printer_x[None] = 0.0
 
 # will be called n times
 @ti.kernel
@@ -153,7 +166,7 @@ def init():
     q_ind = time_stamp[None] % window_size
     start_time_window[q_ind] = t[None]
     for i in range(n_particles):
-        position_window[q_ind,i] = [ti.random() * square_size + x_offset, ti.random() * square_size + y_offset]
+        position_window[q_ind,i] = [ti.random() * square_size + printer_x[None], ti.random() * square_size + y_offset + printer_size - square_size]
         v_window[q_ind,i] = [0, 0]
         # J[i] = 1
         F_window[q_ind, i] = ti.Matrix([[1, 0], [0, 1]])
@@ -171,15 +184,26 @@ def solid_accumulate():
     solid_particles[None] += n_particles
 
 def accumulate():
+    time_stamp[None] += 1
     if time_stamp[None] >= window_size:
         solid_accumulate()
     init()
+
+@ti.kernel
+def printer_render():
+    for p in printer:
+        printer[p] = [ti.random() * printer_size + printer_x[None], ti.random() * printer_size + y_offset + printer_size]
+
 
 start()
 init()
 gui = ti.GUI('MPM88')
 while gui.running:
     t[None] += 1e-2
+    if ti.sin(t[None]*np.pi*printer_v/0.0095) > 0:
+        printer_x[None] += printer_v
+    else:
+        printer_x[None] -= printer_v
     # ratio[None] = 1.0/(1.0+ti.exp(-t[None]+10.0))
     for e in gui.get_events(gui.PRESS):
         if e.key == gui.ESCAPE:
@@ -189,14 +213,20 @@ while gui.running:
         #     init()
         elif e.key in ('p'):
             print(t[None])
+            print(printer_x[None])
         elif e.key == 'a':
-            time_stamp[None] += 1
             accumulate()
 
     mouse_pos = gui.get_cursor_pos()
     attractor_pos[None] = mouse_pos
     attractor_strength[None] = (gui.is_pressed(gui.LMB) - gui.is_pressed(gui.RMB))*2.0
+
+    if t[None] - pretime[None] > cooldown:
+        accumulate()
+        pretime[None] = t[None]
+
     for s in range(50):
+        printer_render()
         substep()
 
     gui.clear(0x112F41)
@@ -204,5 +234,6 @@ while gui.running:
     A[np.isnan(A)] = 0
     gui.circles(A, radius=1.5, color=0x068587)
     gui.circles(solid_x.to_numpy(), radius=1.5, color=0xED553B)
+    gui.circles(printer.to_numpy(), radius=1.5, color=0xFF94E6)
     gui.circle(mouse_pos, radius=15, color=0x336699)
     gui.show()
