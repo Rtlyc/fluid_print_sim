@@ -1,28 +1,22 @@
-# MPM-MLS in 88 lines of Taichi code, originally created by @yuanming-hu
-from tkinter import N
-from matplotlib.ft2font import KERNING_DEFAULT
 import taichi as ti
 import numpy as np
 
 ti.init(arch=ti.gpu)
 
-maximum_step = 1024
-n_particles = 64
-square_size = 0.05
-x_offset = 0.3
-y_offset = 0.9
+maximum_step = 1024 # render maximum steps
+n_particles = 64 # water drop particles
+square_size = 0.05 # water drop size
 
+y_offset = 0.9
 printer_x = ti.field(float, ())
 printer_v = 0.005
 printer_size = 0.05
 printer_particles = 256
 printer = ti.Vector.field(2, float, printer_particles)
 
-
 n_grid = 128
 dx = 1 / n_grid
 dt = 2e-4
-
 p_rho = 1
 p_vol = (dx * 0.5)**2
 p_mass = p_vol * p_rho
@@ -32,6 +26,7 @@ attractor_strength = ti.field(float, ())
 bound = 3
 E = 400
 
+# Handle time
 cooldown = 0.015
 t = ti.field(float, ())
 pretime = ti.field(float, ())
@@ -173,7 +168,6 @@ def init():
         # Jp_window[q_ind, i] = 1
 
 
-# will be called n-1 times when append new fluid
 @ti.kernel
 def solid_accumulate():
     q_ind = time_stamp[None] % window_size
@@ -183,6 +177,7 @@ def solid_accumulate():
         boundary[xind] = max(boundary[xind], position_window[q_ind,i].y)
     solid_particles[None] += n_particles
 
+# will be called n-1 times when append new fluid
 def accumulate():
     time_stamp[None] += 1
     if time_stamp[None] >= window_size:
@@ -232,6 +227,7 @@ while gui.running:
     gui.clear(0x112F41)
     A = position_window.to_numpy().reshape(window_size*n_particles,2)
     A[np.isnan(A)] = 0
+    
     gui.circles(A, radius=1.5, color=0x068587)
     gui.circles(solid_x.to_numpy(), radius=1.5, color=0xED553B)
     gui.circles(printer.to_numpy(), radius=1.5, color=0xFF94E6)
